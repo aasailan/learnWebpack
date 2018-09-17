@@ -1,0 +1,19 @@
+{
+  "name": "learn_webpack",
+  "version": "1.0.0",
+  "description": "learn webpack",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "webpack3",
+    "learn",
+    "src"
+  ],
+  "author": "qiao",
+  "license": "ISC",
+  "devDependencies": {
+    "webpack": "^3.10.0"
+  }
+}
