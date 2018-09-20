@@ -113,7 +113,7 @@ if(!configFileLoaded) {
 经过convert-argv.js文件的运行，最后得出了需要传递给webpack编译的webpack config对象，然后进入下一步。
 
 
-### 2、创建compiler对象，调用compiler.run方法开始进入编译过程
+### 2、创建compiler对象，在compiler对象上加载必要插件，调用compiler.run方法开始进入编译过程
 ```javascript
 // webpack/bin/webpack.js文件内
 // 获取webpack函数，在外部require('webpack')得到就是该函数
@@ -161,7 +161,7 @@ function webpack(options, callback) {
     // 触发environment和after-environment hook
     compiler.applyPlugins("environment");
     compiler.applyPlugins("after-environment");
-    // 关键方法 这个方法将会针对我们传进去的webpack config 进行逐一编译，接下来我们再来仔细看看这个模块。
+    // 关键方法 这个方法将会针对我们传进去的webpack config 进行逐一编译，然后注册许多关键插件
     compiler.options = new WebpackOptionsApply().process(options, compiler);
   } else {
     throw new Error("Invalid argument: options");
@@ -201,8 +201,214 @@ exportPlugins(exports.optimize = {}, {
 });
 
 ```
+上面源码中WebpackOptionsApply类的process方法非常重要。这个方法中根据webpack config对象对compiler注册了不同的插件，以及一些通用的插件。这些插件都比较关键，比如有负责调用loader的LoaderPlugin，有负责注册make事件钩子的EntryOptionPlugin等。这些插件在后面的构建生命周期中起到关键作用。WebpackOptionsApply类的process如下：
+```javascript
+// webpack/lib/WebpackOptionsApply.js文件内
+/**
+* @description 根据webpack config对象，对compiler添加一些必要属性，以及加载必要的插件
+* @param {*} options
+* @param {*} compiler
+* @returns
+* @memberof WebpackOptionsApply
+*/
+process(options, compiler) {
+  let ExternalsPlugin;
+  // 给compiler添加必要属性
+  compiler.outputPath = options.output.path;
+  compiler.recordsInputPath = options.recordsInputPath || options.recordsPath;
+  compiler.recordsOutputPath = options.recordsOutputPath || options.recordsPath;
+  compiler.name = options.name;
+  compiler.dependencies = options.dependencies;
+  // 处理webpack config target选项
+  if(typeof options.target === "string") {
+    let JsonpTemplatePlugin;
+    let NodeSourcePlugin;
+    let NodeTargetPlugin;
+    let NodeTemplatePlugin;
+
+    switch(options.target) {
+      case "web":
+        // 针对前端打包环境加载插件，后面是根据不同的target加载不同的插件
+        JsonpTemplatePlugin = require("./JsonpTemplatePlugin");
+        NodeSourcePlugin = require("./node/NodeSourcePlugin");
+        compiler.apply(
+          new JsonpTemplatePlugin(options.output),
+          new FunctionModulePlugin(options.output),
+          new NodeSourcePlugin(options.node),
+          new LoaderTargetPlugin(options.target)
+        );
+        break;
+      case "webworker":
+        ...
+      case "node":
+      case "async-node":
+        ...
+        break;
+      case "node-webkit":
+        ...
+        break;
+      case "atom":
+      case "electron":
+      case "electron-main":
+        ...
+        break;
+      case "electron-renderer":
+        ...
+        break;
+      default:
+        throw new Error("Unsupported target '" + options.target + "'.");
+    }
+  } else if(options.target !== false) {
+    options.target(compiler);
+  } else {
+    throw new Error("Unsupported target '" + options.target + "'.");
+  }
+
+  if(options.output.library || options.output.libraryTarget !== "var") {
+    // 针对output.library选项加载插件
+    ...
+  }
+  if(options.externals) {
+    // 处针对externals选项加载插件
+    ... 
+  }
+  let noSources;
+  let legacy;
+  let modern;
+  let comment;
+  // 处理devtool选项
+  if(options.devtool && (options.devtool.indexOf("sourcemap") >= 0 || options.devtool.indexOf("source-map") >= 0)) {
+    ...
+  } else if(options.devtool && options.devtool.indexOf("eval") >= 0) {
+    ...
+  }
+  
+  // NOTE: 重要插件：在EntryOptionPlugin插件内加载了 DynamicEntryPlugin 插件，进而注册了make事件回调钩子
+  // 在make事件回调钩子中，webpack会调用compiltion.addEntry()方法，开始加载和build模块
+  compiler.apply(new EntryOptionPlugin());
+  
+  compiler.applyPluginsBailResult("entry-option", options.context, options.entry);
+
+  // 加载编译相关插件
+  compiler.apply(
+    new CompatibilityPlugin(),
+    new HarmonyModulesPlugin(options.module),
+    new AMDPlugin(options.module, options.amd || {}),
+    // 为编译提供commonjs规范支持的插件
+    new CommonJsPlugin(options.module),
+    // loader插件，该插件在 compilation 上注册normal-module-loader事件，并在该回调钩子内调用loader
+    new LoaderPlugin(),
+    new NodeStuffPlugin(options.node),
+    new RequireJsStuffPlugin(),
+    new APIPlugin(),
+    new ConstPlugin(),
+    new UseStrictPlugin(),
+    new RequireIncludePlugin(),
+    new RequireEnsurePlugin(),
+    new RequireContextPlugin(options.resolve.modules, options.resolve.extensions, options.resolve.mainFiles),
+    new ImportPlugin(options.module),
+    new SystemPlugin(options.module)
+  );
+
+  // 加载chunk处理相关插件
+  compiler.apply(
+    new EnsureChunkConditionsPlugin(),
+    new RemoveParentModulesPlugin(),
+    new RemoveEmptyChunksPlugin(),
+    new MergeDuplicateChunksPlugin(),
+    new FlagIncludedChunksPlugin(),
+    new OccurrenceOrderPlugin(true),
+    new FlagDependencyExportsPlugin(),
+    new FlagDependencyUsagePlugin()
+  );
+
+  if(options.performance) {
+    compiler.apply(new SizeLimitsPlugin(options.performance));
+  }
+
+  compiler.apply(new TemplatedPathPlugin());
+
+  compiler.apply(new RecordIdsPlugin());
+
+  compiler.apply(new WarnCaseSensitiveModulesPlugin());
+
+  if(options.cache) {
+    ...
+    // 处理cache选项
+  }
+
+  compiler.applyPlugins("after-plugins", compiler);
+  ... 
+  compiler.applyPlugins("after-resolvers", compiler);
+  return options;
+}
+```
+process方法中加载很多关键的插件，这里关注其中的EntryOptionPlugin。EntryOptionPlugin插件中又根据入口文件是否多个注册了MultiEntryPlugin或者SingleEntryPlugin，这两个插件会在compiler中注册make回调钩子，并在这个回调钩子中，调用compilation.addEntry方法开从入口文件解析并加载module。
+```javascript
+// webpack/lib/EntryOptionPlugin.js文件内
+function itemToPlugin(context, item, name) {
+	if(Array.isArray(item)) {
+    // entry为数组时，多入口文件
+		return new MultiEntryPlugin(context, item, name);
+  }
+  // entry不为数组，单入口文件
+	return new SingleEntryPlugin(context, item, name);
+}
+
+module.exports = class EntryOptionPlugin {
+	apply(compiler) {
+    // 注册entry-option事件回调
+		compiler.plugin("entry-option", (context, entry) => {
+      // 在这里加载 SingleEntryPlugin 或者 MultiEntryPlugin 插件
+			if(typeof entry === "string" || Array.isArray(entry)) {
+				compiler.apply(itemToPlugin(context, entry, "main"));
+			} else if(typeof entry === "object") {
+				Object.keys(entry).forEach(name => compiler.apply(itemToPlugin(context, entry[name], name)));
+			} else if(typeof entry === "function") {
+        // 如果entry字段是一个函数，则加载 DynamicEntryPlugin 插件
+				compiler.apply(new DynamicEntryPlugin(context, entry));
+			}
+			return true;
+		});
+	}
+};
+```
+EntryOptionPlugin内根据webpack config对象的entry选项是否为数组来加载MultiEntryPlugin或者SingleEntryPlugin。这两个插件都在compiler对象上注册了make事件钩子，并在该回调事件内调用了compilation.addEntry方法，这个方法是webpack加载入口文件并且递归解析加载依赖module的开始。下面我们以SingleEntryPlugin为例：
+```javascript
+// webpack/lib/SingleEntryPlugin.js文件内
+class SingleEntryPlugin {
+  constructor(context, entry, name) {
+    this.context = context;
+    this.entry = entry;
+    this.name = name;
+  }
+
+  apply(compiler) {
+    compiler.plugin("compilation", (compilation, params) => {
+      const normalModuleFactory = params.normalModuleFactory;
+
+      compilation.dependencyFactories.set(SingleEntryDependency, normalModuleFactory);
+    });
+    // 注册make事件钩子，这个事件会在 compiler.compile方法内触发。
+    compiler.plugin("make", (compilation, callback) => {
+      const dep = SingleEntryPlugin.createDependency(this.entry, this.name);
+      // 关键方法：调用 compilation.addEntry 方法，从这个方法开始加载入口文件，并且递归解析加载依赖module
+      compilation.addEntry(this.context, dep, this.name, callback);
+    });
+  }
+
+  static createDependency(entry, name) {
+    const dep = new SingleEntryDependency(entry);
+    dep.loc = name;
+    return dep;
+  }
+}
+```
+现在从深入WebpackOptionsApply类的process方法回到webpack方法中。再来聊一下Compiler这个对象以及Compiler.run方法。   
 Compiler对象是webpack编译过程中非常重要的一个对象。compiler对象代表的是配置完备的Webpack环境。compiler对象只在Webpack启动时构建一次，由Webpack组合所有的配置项构建生成。Compiler 继承自Tapable类，借助继承的Tapable类，Compiler具备有被注册监听事件，以及发射事件触发hook的功能，webpack的插件机制也由此形成。大多数面向用户的插件，都是首先在 Compiler 上注册的。   
-插件注册，可见下面的*一些细节章节*。   
+插件注册，可见下面的[*一些细节章节的插件注册*](#插件注册)。这里不再赘述。    
+Compiler对象的介绍，也可见下面的[*一些细节章节的Compiler对象*](#Compiler类)。这里不再赘述。  
+Tapable类的介绍，可见下面的[*一些细节章节的Tapable类*](#Tapable类)。       
 webpack的编译构建流程，由compiler.run()开始进入
 ```javascript
 // webpack/lin/Complier.js文件内
@@ -309,5 +515,120 @@ class NodeEnvironmentPlugin {
 	}
 }
 ```
- 
+
+### Compiler类
+TODO: 编写Compiler对象对象的注释
+
+### Tapable类
+Tapable类提供事件注册以及事件触发的能力。webpack基于事件流的插件机制就源于此。Tapable实例内部维护一个_plugins对象，作为事件注册的保存对象。同时提供以下重要方法：
+* plugin(name: string, fn: function): void // 注册事件以及事件回调钩子，类似于 addEventListener(name, fn);
+* applyPlugins**(name: string, params...): void // 以applyPlugins开头的一系列方法，用于触发指定事件
+
+关于Tapable类的更详细介绍，可以参考 [Webpack 源码（一）—— Tapable 和 事件流](https://segmentfault.com/a/1190000008060440#articleHeader6) 或者 [直接查看Tapable的源码注释]()。
+
+比较有意思的是，由于compiler类和compilation类都继承了 Tapable类。所以在Tapable类上添加log方法，再运行webpack，就可以很方便的得知webpack整个生命周期中事件的注册和触发顺序。关于这点，在本项目的debug_node_modules/tapable文件夹中的Tapable类已经添加log方法，只要在webstorm中debug build/webstorm-debugger.js文件，即可看到输出，输出如下：
+```
+Compiler plugin: before-run
+Compiler plugin: this-compilation
+Compiler plugin: compilation
+Compiler plugin: compilation
+Compiler plugin: after-resolvers
+Compiler plugin: compilation
+Compiler plugin: entry-option
+Compiler applyPluginsBailResult: entry-option
+Compiler plugin: compilation
+Compiler plugin: make
+Compiler plugin: compilation
+Compiler plugin: compilation
+Compiler plugin: compilation
+Compiler plugin: after-resolvers
+Compiler plugin: compilation
+Compiler plugin: compilation
+Compiler plugin: compilation
+Compiler plugin: compilation
+Compiler plugin: compilation
+Compiler plugin: compilation
+Compiler plugin: compilation
+Compiler plugin: compilation
+Compiler plugin: compilation
+Compiler plugin: compilation
+Compiler plugin: compilation
+Compiler plugin: compilation
+Compiler plugin: compilation
+Compiler plugin: compilation
+Compiler plugin: compilation
+Compiler plugin: compilation
+Compiler plugin: compilation
+Compiler plugin: compilation
+Compiler plugin: compilation
+Compiler plugin: compilation
+Compiler plugin: compilation
+Compiler plugin: after-emit
+Compiler plugin: compilation
+Compiler plugin: compilation
+Compiler plugin: compilation
+Compiler plugin: this-compilation
+Compiler plugin: watch-run
+Compiler plugin: run
+Compiler plugin: after-compile
+Compiler applyPlugins: after-resolvers
+Compiler applyPluginsAsyncSeries: before-run
+Compiler applyPluginsAsyncSeries: run
+Compiler applyPluginsAsyncSeries: before-compile
+Compiler applyPlugins: this-compilation
+Compilation plugin: child-compiler
+Compiler applyPlugins: compilation
+Compilation plugin: normal-module-loader
+Compilation plugin: normal-module-loader
+Compilation plugin: optimize-chunks-basic
+Compilation plugin: optimize-extracted-chunks-basic
+Compilation plugin: optimize-chunks-basic
+Compilation plugin: optimize-extracted-chunks-basic
+Compilation plugin: optimize-chunks-basic
+Compilation plugin: optimize-extracted-chunks-basic
+Compilation plugin: optimize-chunks-basic
+Compilation plugin: optimize-chunk-ids
+Compilation plugin: optimize-module-order
+Compilation plugin: optimize-chunk-order
+Compilation plugin: finish-modules
+Compilation plugin: optimize-modules-advanced
+Compilation plugin: record-modules
+Compilation plugin: revive-modules
+Compilation plugin: record-chunks
+Compilation plugin: revive-chunks
+Compilation plugin: seal
+Compiler applyPluginsParallel: make
+Compilation applyPlugins: normal-module-loader
+Compilation applyPlugins1: finish-modules
+Compilation applyPlugins0: seal
+Compilation applyPluginsBailResult1: optimize-modules-basic
+Compilation applyPluginsBailResult1: optimize-modules
+Compilation applyPluginsBailResult1: optimize-modules-advanced
+Compilation applyPluginsBailResult1: optimize-chunks-basic
+Compilation applyPluginsBailResult1: optimize-chunks
+Compilation applyPluginsBailResult1: optimize-chunks-advanced
+Compilation applyPluginsAsyncSeries: optimize-tree
+Compilation applyPluginsBailResult: optimize-chunk-modules-basic
+Compilation applyPluginsBailResult: optimize-chunk-modules
+Compilation applyPluginsBailResult: optimize-chunk-modules-advanced
+Compilation applyPluginsBailResult: should-record
+Compilation applyPlugins2: revive-modules
+Compilation applyPlugins1: optimize-module-order
+Compilation applyPlugins2: revive-chunks
+Compilation applyPlugins1: optimize-chunk-order
+Compilation applyPlugins1: optimize-chunk-ids
+Compilation applyPlugins2: record-modules
+Compilation applyPlugins2: record-chunks
+Compilation applyPluginsBailResult: should-generate-chunk-assets
+Compilation applyPluginsAsyncSeries: additional-assets
+Compilation applyPluginsAsyncSeries: optimize-chunk-assets
+Compilation applyPluginsAsyncSeries: optimize-assets
+Compilation applyPluginsBailResult: need-additional-seal
+Compilation applyPluginsAsyncSeries: after-seal
+Compiler applyPluginsAsyncSeries: after-compile
+Compiler applyPluginsBailResult: should-emit
+Compiler applyPluginsAsyncSeries: emit
+Compiler applyPluginsAsyncSeries1: after-emit
+Compilation applyPluginsBailResult: need-additional-pass
+```
 ## 未完待续...
