@@ -2,6 +2,8 @@
 
 本项目用于阅读学习webpack源码，项目基于webpack3.10.0版本。wepack源码以及注释放在debug_node_modules文件夹下。利用webstorm debug build文件夹下面的webstorm-debugger.js文件，可以debug debug_node_modules文件夹下面的webpack源码。
 
+#### 由于当前webpack已经升级到webpack4，官方网站的文档已经切换到webpack4。webpack3的文档可在 https://webpack-v3.jsx.app/ 或者 https://github.com/webpack/webpack.js.org/blob/v3.11.0/src/content/index.md 中获取
+
 ## 目录结构说明
 ```
 project
@@ -34,10 +36,13 @@ webpack源码阅读注释写在debug_node_modules/webpack文件夹内。
 require("./config-yargs")(yargs);
 ...
 // 向yargs实例添加shell options检查规则
-yargs.options({...})
+yargs.options({
+  ...
+})
 ...
-// 传入shell options，在这个函数内扫描webpack config文件，获取webpack config对象
-// 重要方法
+
+// NOTE: 重要方法 传入shell options，在这个函数内扫描webpack config文件，获取webpack config对象（函数返回的options对象就是）
+// argv为shell options参数
 var options = require("./convert-argv")(yargs, argv);
 ...
 ```
@@ -47,7 +52,7 @@ convert-argv.js文件内导出了一个函数，该函数内会根据shell optio
 ...
 if(argv.config) {
   // argv是shell option对象
-  // 如果shell option中指定了webpack config文件，则获取指定的config文件(webpack --config)
+  // NOTE: 如果shell option中指定了webpack config文件，则获取指定的config文件(webpack --config)
   var getConfigExtension = function getConfigExtension(configPath) {
     for(i = extensions.length - 1; i >= 0; i--) {
       var tmpExt = extensions[i];
@@ -66,7 +71,7 @@ if(argv.config) {
       ext: extension
     };
   };
-
+  // NOTE: 将webpack --config选项保存成数组
   var configArgList = Array.isArray(argv.config) ? argv.config : [argv.config];
   // 将配置文件路径保存进configFiles数组
   configFiles = configArgList.map(mapConfigArg);
@@ -84,6 +89,15 @@ if(argv.config) {
     }
   }
 }
+
+// NOTE: 经过上面的处理，configFiles中保存了所有webpack config文件的绝对路径，如下所示：
+// configFiles = [
+//   {
+//     path: '这里保存webpack config文件的绝对路径',
+//     ext: '这里保存webpack config文件的后缀',
+//   },
+//   ...
+// ];
 if(configFiles.length > 0) {
   ...
   var requireConfig = function requireConfig(configPath) {
@@ -142,10 +156,10 @@ function webpack(options, callback) {
   }
   let compiler;
   if(Array.isArray(options)) {
-    // 如果webpack config最外层是数组形式，则使用MultiCompiler
+    // NOTE: 如果webpack config最外层是数组形式，则使用MultiCompiler
     compiler = new MultiCompiler(options.map(options => webpack(options)));
   } else if(typeof options === "object") {
-    // 如果传入的webpack config是一个object（通常传入的都是一个object，所以重点查看此处）
+    // NOTE: 如果传入的webpack config是一个object（通常传入的都是一个object，所以重点查看此处）
     // TODO webpack 4: process returns options
     new WebpackOptionsDefaulter().process(options);
     // 创建Compiler实例
@@ -155,13 +169,13 @@ function webpack(options, callback) {
     // 注册NodeEnvironmentPlugin插件，里面向compiler注册了 'before-run' hook
     new NodeEnvironmentPlugin().apply(compiler);
     if(options.plugins && Array.isArray(options.plugins)) {
-    // 注册webpack config 中的插件
+    // NOTE: 注册webpack config 中的插件
       compiler.apply.apply(compiler, options.plugins);
     }
     // 触发environment和after-environment hook
     compiler.applyPlugins("environment");
     compiler.applyPlugins("after-environment");
-    // 关键方法 这个方法将会针对我们传进去的webpack config 进行逐一编译，然后注册许多关键插件
+    // NOTE: 关键方法 这个方法将会针对我们传进去的webpack config 进行逐一编译，然后注册许多关键插件
     compiler.options = new WebpackOptionsApply().process(options, compiler);
   } else {
     throw new Error("Invalid argument: options");
@@ -180,6 +194,7 @@ function webpack(options, callback) {
 exports = module.exports = webpack;
 
 ...
+
 function exportPlugins(obj, mappings) {
 	Object.keys(mappings).forEach(name => {
 		Object.defineProperty(obj, name, {
@@ -189,11 +204,13 @@ function exportPlugins(obj, mappings) {
 		});
 	});
 }
+
 // 向webpack函数对象添加内置插件的构造函数
 exportPlugins(exports, {
 	"DefinePlugin": () => require("./DefinePlugin"),
   ...
 });
+
 // 向webpack.optimize 添加内置插件构造函数
 exportPlugins(exports.optimize = {}, {
   ...
@@ -201,7 +218,8 @@ exportPlugins(exports.optimize = {}, {
 });
 
 ```
-上面源码中WebpackOptionsApply类的process方法非常重要。这个方法中根据webpack config对象对compiler注册了不同的插件，以及一些通用的插件。这些插件都比较关键，比如有负责调用loader的LoaderPlugin，有负责注册make事件钩子的EntryOptionPlugin等。这些插件在后面的构建生命周期中起到关键作用。WebpackOptionsApply类的process如下：
+上面源码中**WebpackOptionsApply类的process方法**非常重要。这个方法中根据webpack config对象对compiler注册了不同的插件，以及一些通用的插件。这些插件都比较关键，比如有**负责调用loader的LoaderPlugin**，有负责**注册make事件钩子的EntryOptionPlugin**等。这些插件在后面的构建生命周期中起到关键作用。
+WebpackOptionsApply类的process如下：
 ```javascript
 // webpack/lib/WebpackOptionsApply.js文件内
 /**
@@ -225,10 +243,10 @@ process(options, compiler) {
     let NodeSourcePlugin;
     let NodeTargetPlugin;
     let NodeTemplatePlugin;
-
+    // NOTE: 以下根据不同的target加载不同的插件
     switch(options.target) {
       case "web":
-        // 针对前端打包环境加载插件，后面是根据不同的target加载不同的插件
+        // 针对前端打包环境加载插件
         JsonpTemplatePlugin = require("./JsonpTemplatePlugin");
         NodeSourcePlugin = require("./node/NodeSourcePlugin");
         compiler.apply(
@@ -343,7 +361,8 @@ process(options, compiler) {
   return options;
 }
 ```
-process方法中加载很多关键的插件，这里关注其中的EntryOptionPlugin。EntryOptionPlugin插件中又根据入口文件是否多个注册了MultiEntryPlugin或者SingleEntryPlugin，这两个插件会在compiler中注册make回调钩子，并在这个回调钩子中，调用compilation.addEntry方法开从入口文件解析并加载module。
+上述process方法中加载很多关键的插件，这里关注其中的**EntryOptionPlugin**。EntryOptionPlugin插件中又根据入口文件是否多个注册了**MultiEntryPlugin或者SingleEntryPlugin**，这两个插件会在compiler中**注册make回调钩子**，并在这个回调钩子中，调用compilation.addEntry方法开从入口文件解析并加载module。
+以下是EntryOptionPlugin内的关键代码：
 ```javascript
 // webpack/lib/EntryOptionPlugin.js文件内
 function itemToPlugin(context, item, name) {
@@ -373,7 +392,8 @@ module.exports = class EntryOptionPlugin {
 	}
 };
 ```
-EntryOptionPlugin内根据webpack config对象的entry选项是否为数组来加载MultiEntryPlugin或者SingleEntryPlugin。这两个插件都在compiler对象上注册了make事件钩子，并在该回调事件内调用了compilation.addEntry方法，这个方法是webpack加载入口文件并且递归解析加载依赖module的开始。下面我们以SingleEntryPlugin为例：
+EntryOptionPlugin内根据webpack config对象的entry选项是否为数组来加载**MultiEntryPlugin或者SingleEntryPlugin**，如果是entry是函数则加载**DynamicEntryPlugin**。这三个插件都在compiler对象上注册了make事件钩子，并在该回调事件内调用了**compilation.addEntry**方法，这个方法是**webpack加载入口文件并且递归解析加载依赖module的开始**。
+下面我们以SingleEntryPlugin为例：
 ```javascript
 // webpack/lib/SingleEntryPlugin.js文件内
 class SingleEntryPlugin {
@@ -389,10 +409,10 @@ class SingleEntryPlugin {
 
       compilation.dependencyFactories.set(SingleEntryDependency, normalModuleFactory);
     });
-    // 注册make事件钩子，这个事件会在 compiler.compile方法内触发。
+    // NOTE: 注册make事件钩子，这个事件会在 compiler.compile方法内触发。
     compiler.plugin("make", (compilation, callback) => {
       const dep = SingleEntryPlugin.createDependency(this.entry, this.name);
-      // 关键方法：调用 compilation.addEntry 方法，从这个方法开始加载入口文件，并且递归解析加载依赖module
+      // NOTE: 关键方法：调用 compilation.addEntry 方法，从这个方法开始加载入口文件，并且递归解析加载依赖module
       compilation.addEntry(this.context, dep, this.name, callback);
     });
   }
@@ -405,7 +425,7 @@ class SingleEntryPlugin {
 }
 ```
 现在从深入WebpackOptionsApply类的process方法回到webpack方法中。再来聊一下Compiler这个对象以及Compiler.run方法。   
-Compiler对象是webpack编译过程中非常重要的一个对象。compiler对象代表的是配置完备的Webpack环境。compiler对象只在Webpack启动时构建一次，由Webpack组合所有的配置项构建生成。Compiler 继承自Tapable类，借助继承的Tapable类，Compiler具备有被注册监听事件，以及发射事件触发hook的功能，webpack的插件机制也由此形成。大多数面向用户的插件，都是首先在 Compiler 上注册的。   
+**Compiler对象**是webpack编译过程中非常重要的一个对象。它代表的是配置完备的Webpack环境。compiler对象只在Webpack启动时构建一次，由Webpack组合所有的配置项构建生成。Compiler 继承自Tapable类，借助继承的Tapable类，Compiler具备有被注册监听事件，以及发射事件触发hook的功能，webpack的插件机制也由此形成。大多数面向用户的插件，都是首先在 Compiler 上注册的。   
 插件注册，可见下面的[*一些细节章节的插件注册*](#插件注册)。这里不再赘述。    
 Compiler对象的介绍，也可见下面的[*一些细节章节的Compiler对象*](#Compiler类)。这里不再赘述。  
 Tapable类的介绍，可见下面的[*一些细节章节的Tapable类*](#Tapable类)。       
@@ -416,6 +436,7 @@ webpack的编译构建流程，由compiler.run()开始进入
 * @description 由该方法开始进入webpack编译流程
 * @param {*} callback 编译完成后回调函数
 * @memberof Compiler
+* @file webpack/lin/Complier.js
 */
 run(callback) {
   const startTime = Date.now();
@@ -423,19 +444,20 @@ run(callback) {
   // 定义compile后的回调函数
   const onCompiled = (err, compilation) => {
     ...
+    return callback();
   };
 
-  // 触发before-run事件，compiler生命周期事件
+  // 触发before-run事件（compiler生命周期事件）
   // 具体参考：https://webpack.js.org/api/compiler-hooks/
   this.applyPluginsAsync("before-run", this, err => {
     if(err) return callback(err);
-    // 触发run事件，compiler生命周期事件
+    // 触发run事件（compiler生命周期事件）
     this.applyPluginsAsync("run", this, err => {
       if(err) return callback(err);
 
       this.readRecords(err => {
         if(err) return callback(err);
-        // 关键方法：在此键入具体的编译构建流程
+        // NOTE: 关键方法：在此键入具体的编译构建流程
         this.compile(onCompiled);
       });
     });
@@ -516,17 +538,23 @@ class NodeEnvironmentPlugin {
 }
 ```
 
-### Compiler类
-TODO: 编写Compiler对象对象的注释
-
 ### Tapable类
-Tapable类提供事件注册以及事件触发的能力。webpack基于事件流的插件机制就源于此。Tapable实例内部维护一个_plugins对象，作为事件注册的保存对象。同时提供以下重要方法：
+Tapable类提供事件注册以及事件触发的能力（发布订阅模式模式中的Publisher对象，提供自定义事件注册和触发功能）。Compiler类和Compilation类都通过继承Tapable类来实现自己的生命周期事件的触发。所以webpack基于事件流的插件机制就源于此。
+
+Tapable实例内部维护一个**_plugins**对象，作为事件注册的保存对象。同时提供以下重要方法：
 * plugin(name: string, fn: function): void // 注册事件以及事件回调钩子，类似于 addEventListener(name, fn);
 * applyPlugins**(name: string, params...): void // 以applyPlugins开头的一系列方法，用于触发指定事件
+* apply(...plugins): void // 该方法接受任意个Plugin实例，并逐一调用Plugin实例的apply方法。并传入当前Tapable类实例。
 
-关于Tapable类的更详细介绍，可以参考 [Webpack 源码（一）—— Tapable 和 事件流](https://segmentfault.com/a/1190000008060440#articleHeader6) 或者 [直接查看Tapable的源码注释]()。
+Tapable中定义applyPlugin**的方法簇，用来触发指定自定义事件，并且以不同的方式来调用注册监听的handlers（同步或异步的调用handler），影响了handlers的传入参数（主要是handler传入的第一个参数和最后一个参数，以及参数的数量）、实现方式（handler是否会接受一个next参数来显示调用下一个handler）、 handlers链条的处理方式（handler能否中断下一个handler的调用）。比如applyPlugins方法会同步地按顺序地回调所有监听事件的handler，而applyPluginsAsyncSeries则依赖于每一个handler显示地调用next函数来对下一个handler进行调用。
 
-比较有意思的是，由于compiler类和compilation类都继承了 Tapable类。所以在Tapable类上添加log方法，再运行webpack，就可以很方便的得知webpack整个生命周期中事件的注册和触发顺序。关于这点，在本项目的debug_node_modules/tapable文件夹中的Tapable类已经添加log方法，只要在webstorm中debug build/webstorm-debugger.js文件，即可看到输出，输出如下：
+因为Tapable中有如此多的**applyPlugin\*\***方法来触发自定义事件，所以webpack的**哪些生命周期事件由哪个具体的applyPlugin\*\* 方法触发**，就变得额外关键，因为这**决定了这个生命周期事件拥有哪些特性**，以及插件在注册指定的webpack的生命周期事件handler时，要如何具体的实现这个handler。
+在 https://webpack-v3.jsx.app/Sapi/compiler/#event-hooks 中可以查到Compiler的每个具体的生命周期事件属于哪种类型，进而在实现响应的handler时，可以明确handler的参数传入和实现方式。
+同样的，在  https://webpack-v3.jsx.app/api/compilation/ 可以查看到compilation对象的所有生命周期
+
+关于Tapable类的更详细介绍，可以参考 [Webpack 源码（一）—— Tapable 和 事件流](https://segmentfault.com/a/1190000008060440#articleHeader6) 或者 [直接查看Tapable的源码注释](https://github.com/aasailan/learnWebpack/blob/master/debug_node_modules/tapable/lib/Tapable.js)。
+
+比较有意思的是，由于compiler类和compilation类都继承了Tapable类。所以在Tapable类上添加log方法，再运行webpack，就可以很方便的得知webpack整个生命周期中事件的注册和触发顺序。关于这点，在本项目的debug_node_modules/tapable文件夹中的Tapable类已经添加log方法，只要在webstorm中debug build/webstorm-debugger.js文件，即可看到输出，输出如下：
 ```
 Compiler plugin: before-run
 Compiler plugin: this-compilation
@@ -631,4 +659,24 @@ Compiler applyPluginsAsyncSeries: emit
 Compiler applyPluginsAsyncSeries1: after-emit
 Compilation applyPluginsBailResult: need-additional-pass
 ```
+
+### Compiler类
+##### Compiler对象在整个webpack构建的生命周期中只存在一个实例，代表了webpack的配置完备的Webpack环境和webpack的编译过程。Compiler实例拥有完整的webpack配置对象，在webpack构建的过程中触发自己的生命周期。
+
+Compiler对象只在Webpack启动时初始化一次，存在于webpack从启动到关闭的整个生命周期，代表了配置完备的Webpack环境和一次完整的编译过程。
+Compiler 继承自Tapable类，借助继承的Tapable类，Compiler具备有被注册监听事件，以及发射事件触发hook的功能。Compiler会在构建的过程中触发生命周期事件，以此带动Plugins中注册的对应的handler函数进行具体的事件处理。
+大多数面向用户的插件，都是首先在 Compiler 上注册的。值得注意的是，各种loader实际上也是在LoaderPlugin（内置插件）内被调用的，loader本质上是一个函数接受模块源文件作为输入，转换成浏览器适用的文件作为输出，而负责启动调用loader的正是LoaderPlugin
+
+Compiler类中的compile方法非常重要，是着当前编译任务的开始。当Compiler类处于watch模式时，文件系统发生改变，则重新调用Compiler.compile方法重启一次编译任务（这是webpack-dev-server能在文件发生改变时自动重新编译的基础）
+
+Compiler类的一些详细注释可[直接查看Compiler的源码注释](https://github.com/aasailan/learnWebpack/blob/master/debug_node_modules/webpack/lib/Compiler.js)。
+
+Compiler完整的生命周期可参见：https://webpack-v3.jsx.app/api/compiler/#event-hooks
+
+Compiler中一些重要的生命周期节点：
+// TODO: 待补充
+
+### Compilation类
+
+
 ## 未完待续...
