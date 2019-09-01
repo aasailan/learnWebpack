@@ -736,3 +736,17 @@ Compiler applyPluginsAsyncSeries1: after-emit handlerNum: 1 // NOTE: assets输�
 
 
 ## 未完待续...
+
+
+### What is a webpack Module
+In contrast to Node.js modules, webpack modules can express their dependencies in a variety of ways. A few examples are:
+
+An ES2015 import statement
+A CommonJS require() statement
+An AMD define and require statement
+An @import statement inside of a css/sass/less file.
+An image url in a stylesheet (url(...)) or html (<img src=...>) file.
+webpack 1 requires a specific loader to convert ES2015 import, however this is possible out of the box via webpack 2
+
+Supported Module Types
+webpack supports modules written in a variety of languages and preprocessors, via loaders. Loaders describe to webpack how to process non-JavaScript modules and include these dependencies into your bundles. The webpack community has built loaders for a wide variety of popular languages and language processors, including:
