@@ -36,16 +36,18 @@ Compilation类也是继承了Tapable类，拥有自己的生命周期，Compilat
 
 Compilation类的一些详细注释可[直接查看Compilation的源码注释](https://github.com/aasailan/learnWebpack/blob/master/debug_node_modules/webpack/lib/Compilation.js)。
 
+Compilation完整的生命周期可参见：https://webpack-v3.jsx.app/api/compilation/
+
 ### module对象
-TODO:
+* module是webpack构建过程中**组织源码文件的核心对象**。module类是一个抽象类，有好几个不同的子类，NormalModule , MultiModule , ContextModule , DelegatedModule等。
+* webpack在构建过程中遇到es的import语句、commonjs的require语句、amd的require语句、css/sass/less文件中的@import语句，url(...)文件引用、img标签中的src语句等都会将对应的引用文件封装成一个module对象。
+* 这里的module对象可以是各式各样的文件（图片、json、html等等）。module对象**拥有关键build方法**，来事件对自身的编译构建，正是在这个方法内会**调用loader将一个non-js module转换成一个js module**，进而转换成ast，实现对module的分析。
 
-### chunk对象
-TODO:
+js文件通常会生成NormalModule，NormalModule类的一些详细注释可[直接查看NormalModule的源码注释](https://github.com/aasailan/learnWebpack/blob/master/debug_node_modules/webpack/lib/NormalModule.js)。
 
-### assets对象
-TODO:
+Module类的一些详细注释可[直接查看Module的源码注释](https://github.com/aasailan/learnWebpack/blob/master/debug_node_modules/webpack/lib/Module.js)。
 
-### What is a webpack Module
+## What is a webpack Module
 In contrast to Node.js modules, webpack modules can express their dependencies in a variety of ways. A few examples are:
 
 An ES2015 import statement
